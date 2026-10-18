@@ -22,7 +22,14 @@ when a new release of this repository is installed through HACS.
 - `manifest.json` pins every requirement Home Assistant does not already ship
   to an exact version (`fork/requirements.lock`), resolved against Home
   Assistant's own constraints, ignoring any release younger than 7 days
-  (`--cooldown-days`). Home Assistant installs those once; nothing floats.
+  (`--cooldown-days`). Home Assistant installs manifest requirements one at a
+  time with `--upgrade`, which lifts each one's dependencies to their newest
+  release, so the list is ordered dependents-first: every exact pin installs
+  after everything that depends on it and lands last.
+- After start-up the component compares installed versions with the pins and
+  logs `HA-MCP pinned requirements drifted: …` if anything moved (another
+  integration's install can lift a shared package). A restart reinstalls the
+  pinned versions.
 - Releases carry `ha_mcp_tools.zip` (HACS `zip_release`); the release notes
   give its sha256.
 - Upstream's GitHub workflows are removed and Actions are off.
@@ -45,9 +52,11 @@ uv run --no-project --python 3.13 fork/build.py --tag vX.Y.Z --ha <HA version> -
 zsh fork/smoke.sh
 ```
 
-`fork/smoke.sh` installs the pinned Home Assistant and `fork/requirements.lock`
-into a throwaway Python 3.14 env, plants a stale PyPI `ha-mcp`, and checks the
-component imports, the bundled copy wins, and ha-mcp's own smoke test passes.
+`fork/smoke.sh` installs the pinned Home Assistant into a throwaway Python 3.14
+env, installs the manifest requirements the way Home Assistant does (in order,
+one at a time, `--upgrade`) and fails on any drift, plants a stale PyPI
+`ha-mcp`, and checks the component imports, the bundled copy wins, and ha-mcp's
+own smoke test passes.
 
 If the patch stops applying, rebuild with `--no-patches`, redo the edits the
 patch describes by hand, regenerate it with `git diff` (add `-N` the new file

@@ -738,6 +738,12 @@ class EmbeddedServerManager:
                 kind="package",
             )
         _LOGGER.info("HA-MCP bundled server package ready (version %s)", version)
+        if drift := await self._hass.async_add_executor_job(bundled_server.pin_drift):
+            _LOGGER.warning(
+                "HA-MCP pinned requirements drifted: %s. Restart Home Assistant "
+                "to reinstall the pinned versions.",
+                ", ".join(drift),
+            )
         return version
 
     async def _async_ensure_managed_package(

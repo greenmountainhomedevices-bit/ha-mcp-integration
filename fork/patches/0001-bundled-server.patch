@@ -12,10 +12,10 @@ index 3d7bdbc..f7f5825 100644
      ALLOWED_VOLUME_ROOTS,
 diff --git a/custom_components/ha_mcp_tools/bundled_server.py b/custom_components/ha_mcp_tools/bundled_server.py
 new file mode 100644
-index 0000000..a174c9e
+index 0000000..9bb373f
 --- /dev/null
 +++ b/custom_components/ha_mcp_tools/bundled_server.py
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,86 @@
 +"""Fork: serve the ha-mcp package bundled in ``vendor/``, never a pip install.
 +
 +Upstream installs and auto-updates ``ha-mcp`` from PyPI at runtime. This fork
@@ -31,6 +31,7 @@ index 0000000..a174c9e
 +import importlib
 +import importlib.metadata
 +import importlib.util
++import json
 +import os
 +import sys
 +from pathlib import Path
@@ -79,6 +80,28 @@ index 0000000..a174c9e
 +            f"but the bundled copy is {version}; restart Home Assistant."
 +        )
 +    return version
++
++
++def pin_drift() -> list[str]:
++    """Return 'name installed (pinned X)' for each manifest pin not installed as pinned (blocking).
++
++    Home Assistant installs requirements one by one with --upgrade, and a later
++    install of another integration can lift a shared dependency, so the pins can
++    drift after the fact. The next restart reinstalls whatever drifted.
++    """
++    manifest = json.loads((VENDOR_DIR.parent / "manifest.json").read_text(encoding="utf-8"))
++    drift = []
++    for requirement in manifest.get("requirements", []):
++        name, sep, pinned = requirement.partition("==")
++        if not sep:
++            continue
++        try:
++            installed = importlib.metadata.version(name)
++        except importlib.metadata.PackageNotFoundError:
++            installed = "missing"
++        if installed != pinned:
++            drift.append(f"{name} {installed} (pinned {pinned})")
++    return drift
 diff --git a/custom_components/ha_mcp_tools/coordinator.py b/custom_components/ha_mcp_tools/coordinator.py
 index c0d519d..17324a9 100644
 --- a/custom_components/ha_mcp_tools/coordinator.py
@@ -96,7 +119,7 @@ index c0d519d..17324a9 100644
  
      async def _async_fetch_latest(self, dist: str) -> str | None:
 diff --git a/custom_components/ha_mcp_tools/embedded_server.py b/custom_components/ha_mcp_tools/embedded_server.py
-index 45490d2..c95be2b 100644
+index 45490d2..9967e83 100644
 --- a/custom_components/ha_mcp_tools/embedded_server.py
 +++ b/custom_components/ha_mcp_tools/embedded_server.py
 @@ -55,6 +55,7 @@ from packaging.requirements import InvalidRequirement, Requirement
@@ -107,7 +130,7 @@ index 45490d2..c95be2b 100644
  from .const import (
      CHANNEL_DEV,
      DATA_ACCESS_TOKEN,
-@@ -725,10 +726,19 @@ class EmbeddedServerManager:
+@@ -725,10 +726,25 @@ class EmbeddedServerManager:
      async def _async_ensure_package(
          self, *, defer_mutations: bool = False
      ) -> str | None:
@@ -127,6 +150,12 @@ index 45490d2..c95be2b 100644
 +                kind="package",
 +            )
 +        _LOGGER.info("HA-MCP bundled server package ready (version %s)", version)
++        if drift := await self._hass.async_add_executor_job(bundled_server.pin_drift):
++            _LOGGER.warning(
++                "HA-MCP pinned requirements drifted: %s. Restart Home Assistant "
++                "to reinstall the pinned versions.",
++                ", ".join(drift),
++            )
 +        return version
  
      async def _async_ensure_managed_package(

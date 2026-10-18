@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib
 import importlib.metadata
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -61,3 +62,25 @@ def activate() -> str:
             f"but the bundled copy is {version}; restart Home Assistant."
         )
     return version
+
+
+def pin_drift() -> list[str]:
+    """Return 'name installed (pinned X)' for each manifest pin not installed as pinned (blocking).
+
+    Home Assistant installs requirements one by one with --upgrade, and a later
+    install of another integration can lift a shared dependency, so the pins can
+    drift after the fact. The next restart reinstalls whatever drifted.
+    """
+    manifest = json.loads((VENDOR_DIR.parent / "manifest.json").read_text(encoding="utf-8"))
+    drift = []
+    for requirement in manifest.get("requirements", []):
+        name, sep, pinned = requirement.partition("==")
+        if not sep:
+            continue
+        try:
+            installed = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            installed = "missing"
+        if installed != pinned:
+            drift.append(f"{name} {installed} (pinned {pinned})")
+    return drift

@@ -126,20 +126,43 @@ def norm(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.split("[")[0].strip().lower())
 
 
-def compile_pins(reqs: list[str], constraints: Path, work: Path, cutoff: str) -> dict[str, str]:
+def compile_pins(reqs: list[str], constraints: Path, work: Path, cutoff: str,
+                 parents: dict[str, set[str]] | None = None) -> dict[str, tuple[str, str]]:
+    """Resolve reqs; fill parents[pkg] with the packages that depend on pkg."""
     infile, outfile = work / "in.txt", work / "out.txt"
     infile.write_text("\n".join(reqs) + "\n")
     run("uv", "pip", "compile", str(infile), "-o", str(outfile), "-q",
         "--python-version", PY_VERSION, "--python-platform", PLATFORM,
-        "-c", str(constraints), "--no-header", "--no-annotate",
+        "-c", str(constraints), "--no-header", "--annotation-style", "line",
         "--exclude-newer", cutoff,
         "--exclude-newer-package", f"homeassistant={dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}")
     pins = {}
     for line in outfile.read_text().splitlines():
-        m = re.match(r"([A-Za-z0-9_.\-\[\]]+)\s*==\s*(\S+)", line.strip())
+        m = re.match(r"([A-Za-z0-9_.\-\[\]]+)\s*==\s*(\S+)\s*(?:#\s*via\s*(.*))?", line.strip())
         if m:
             pins[norm(m.group(1))] = (m.group(1), m.group(2))
+            if parents is not None:
+                parents[norm(m.group(1))] = {
+                    norm(v) for v in (m.group(3) or "").split(",")
+                    if v.strip() and not v.strip().startswith("-")}
     return pins
+
+
+def dependents_first(names: list[str], parents: dict[str, set[str]]) -> list[str]:
+    """Order so every package follows all packages that depend on it.
+
+    Home Assistant installs manifest requirements one at a time with
+    --upgrade, which lifts the installed package's dependencies to their newest
+    release. Installing dependents first lets each exact pin land last.
+    """
+    todo, done, out = set(names), set(), []
+    while todo:
+        ready = sorted(n for n in todo if not (parents.get(n, set()) & todo))
+        if not ready:
+            sys.exit(f"dependency cycle among {sorted(todo)}")
+        out += ready
+        todo -= set(ready)
+    return out
 
 
 def pin_requirements(ha: str, wheel: Path, own: list[str], work: Path, cutoff: str) -> list[str]:
@@ -147,17 +170,19 @@ def pin_requirements(ha: str, wheel: Path, own: list[str], work: Path, cutoff: s
     constraints.write_bytes(fetch(
         f"https://raw.githubusercontent.com/home-assistant/core/{ha}/homeassistant/package_constraints.txt"))
     core = compile_pins([f"homeassistant=={ha}"], constraints, work, cutoff)
+    parents: dict[str, set[str]] = {}
     full = compile_pins([f"homeassistant=={ha}", f"ha-mcp @ {wheel.as_uri()}", *own],
-                        constraints, work, cutoff)
+                        constraints, work, cutoff, parents)
     moved = {k: (core[k][1], v[1]) for k, v in full.items() if k in core and core[k][1] != v[1]}
     if moved:
         sys.exit(f"ha-mcp would move packages Home Assistant {ha} ships: {moved}")
-    pins = sorted(f"{name}=={ver}" for k, (name, ver) in full.items()
-                  if k not in core and k != "ha-mcp")
+    ours = [k for k in full if k not in core and k != "ha-mcp"]
+    pins = [f"{full[k][0]}=={full[k][1]}" for k in dependents_first(ours, parents)]
     (FORK / "requirements.lock").write_text(
         f"# Exact pins for ha-mcp + ha_mcp_tools on Home Assistant {ha}\n"
         f"# (Python {PY_VERSION}, {PLATFORM}); packages Home Assistant ships are left to it.\n"
-        f"# Nothing released after {cutoff}.\n"
+        f"# Nothing released after {cutoff}. Dependents come first: Home Assistant\n"
+        f"# installs these in order, one at a time, with --upgrade.\n"
         + "\n".join(pins) + "\n")
     return pins
 
