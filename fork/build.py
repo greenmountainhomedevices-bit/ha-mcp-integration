@@ -126,14 +126,15 @@ def norm(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.split("[")[0].strip().lower())
 
 
-def compile_pins(reqs: list[str], constraints: Path, work: Path, cutoff: str,
+def compile_pins(reqs: list[str], constraints: list[Path], work: Path, cutoff: str,
                  parents: dict[str, set[str]] | None = None) -> dict[str, tuple[str, str]]:
     """Resolve reqs; fill parents[pkg] with the packages that depend on pkg."""
     infile, outfile = work / "in.txt", work / "out.txt"
     infile.write_text("\n".join(reqs) + "\n")
     run("uv", "pip", "compile", str(infile), "-o", str(outfile), "-q",
         "--python-version", PY_VERSION, "--python-platform", PLATFORM,
-        "-c", str(constraints), "--no-header", "--annotation-style", "line",
+        *[a for c in constraints for a in ("-c", str(c))],
+        "--no-header", "--annotation-style", "line",
         "--exclude-newer", cutoff,
         "--exclude-newer-package", f"homeassistant={dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}")
     pins = {}
@@ -166,9 +167,17 @@ def dependents_first(names: list[str], parents: dict[str, set[str]]) -> list[str
 
 
 def pin_requirements(ha: str, wheel: Path, own: list[str], work: Path, cutoff: str) -> list[str]:
-    constraints = work / "package_constraints.txt"
-    constraints.write_bytes(fetch(
-        f"https://raw.githubusercontent.com/home-assistant/core/{ha}/homeassistant/package_constraints.txt"))
+    core_url = f"https://raw.githubusercontent.com/home-assistant/core/{ha}"
+    package_constraints = work / "package_constraints.txt"
+    package_constraints.write_bytes(fetch(f"{core_url}/homeassistant/package_constraints.txt"))
+    # Built-in integrations pin their own requirements (mcp_server: mcp==1.26.0).
+    # A different pin here would make the two reinstall each other on every
+    # restart, so a shared package takes Home Assistant's version.
+    builtin = work / "requirements_all.txt"
+    builtin.write_text("\n".join(
+        line for line in fetch(f"{core_url}/requirements_all.txt").decode().splitlines()
+        if re.match(r"^[A-Za-z0-9]", line)) + "\n")
+    constraints = [package_constraints, builtin]
     core = compile_pins([f"homeassistant=={ha}"], constraints, work, cutoff)
     parents: dict[str, set[str]] = {}
     full = compile_pins([f"homeassistant=={ha}", f"ha-mcp @ {wheel.as_uri()}", *own],
@@ -180,7 +189,8 @@ def pin_requirements(ha: str, wheel: Path, own: list[str], work: Path, cutoff: s
     pins = [f"{full[k][0]}=={full[k][1]}" for k in dependents_first(ours, parents)]
     (FORK / "requirements.lock").write_text(
         f"# Exact pins for ha-mcp + ha_mcp_tools on Home Assistant {ha}\n"
-        f"# (Python {PY_VERSION}, {PLATFORM}); packages Home Assistant ships are left to it.\n"
+        f"# (Python {PY_VERSION}, {PLATFORM}); packages Home Assistant ships are left to it,\n"
+        f"# and packages its built-in integrations pin take that pin.\n"
         f"# Nothing released after {cutoff}. Dependents come first: Home Assistant\n"
         f"# installs these in order, one at a time, with --upgrade.\n"
         + "\n".join(pins) + "\n")

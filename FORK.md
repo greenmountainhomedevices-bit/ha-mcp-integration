@@ -21,7 +21,10 @@ when a new release of this repository is installed through HACS.
   - `HA_MCP_DISABLE_UPDATE_CHECK=1` turns off the server's own PyPI notice.
 - `manifest.json` pins every requirement Home Assistant does not already ship
   to an exact version (`fork/requirements.lock`), resolved against Home
-  Assistant's own constraints, ignoring any release younger than 7 days
+  Assistant's own constraints and its built-in integrations' pins
+  (`requirements_all.txt`, so a package such as `mcp` that `mcp_server` also
+  pins takes Home Assistant's version instead of the two reinstalling each
+  other on every restart), ignoring any release younger than 7 days
   (`--cooldown-days`). Home Assistant installs manifest requirements one at a
   time with `--upgrade`, which lifts each one's dependencies to their newest
   release, so the list is ordered dependents-first: every exact pin installs
