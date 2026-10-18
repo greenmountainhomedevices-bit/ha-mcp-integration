@@ -1,5 +1,7 @@
 {
-  "name": "HA-MCP Custom Component",
+  "name": "HA-MCP Custom Component (bundled fork)",
   "homeassistant": "2026.8.0",
-  "render_readme": true
+  "render_readme": true,
+  "zip_release": true,
+  "filename": "ha_mcp_tools.zip"
 }

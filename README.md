@@ -1,4 +1,6 @@
-# HA-MCP Custom Component
+# HA-MCP Custom Component (bundled fork)
+
+> **Fork.** This repository ships the ha-mcp server inside the component and never pip-installs or auto-updates it. See [FORK.md](FORK.md) for what differs from [homeassistant-ai/ha-mcp-integration](https://github.com/homeassistant-ai/ha-mcp-integration) and which upstream tag the bundle comes from.
 
 HACS distribution repository for the ha-mcp custom integration. The
 source of truth is the main repository -

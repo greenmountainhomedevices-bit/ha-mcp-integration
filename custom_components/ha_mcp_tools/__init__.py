@@ -39,6 +39,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 from ruamel.yaml import YAMLError
 
+from . import bundled_server  # noqa: F401  # fork: vendor/ first on sys.path
 from .const import (
     ALLOWED_READ_DIRS,
     ALLOWED_VOLUME_ROOTS,

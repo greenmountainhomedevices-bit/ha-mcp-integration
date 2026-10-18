@@ -95,7 +95,10 @@ class ServerVersionCoordinator(DataUpdateCoordinator[ServerVersionInfo]):
             # makes a PyPI-latest comparison meaningless - skip the fetch.
             return ServerVersionInfo(installed=installed, latest=None, dist=dist)
 
-        latest = await self._async_fetch_latest(dist)
+        # Fork: the server ships inside the component, so a newer PyPI build is
+        # never installable here; leaving latest unknown also keeps
+        # async_maybe_auto_update from reloading.
+        latest = None
         return ServerVersionInfo(installed=installed, latest=latest, dist=dist)
 
     async def _async_fetch_latest(self, dist: str) -> str | None:

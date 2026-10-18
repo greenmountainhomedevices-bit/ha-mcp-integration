@@ -55,6 +55,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from . import bundled_server
 from .const import (
     CHANNEL_DEV,
     DATA_ACCESS_TOKEN,
@@ -725,10 +726,19 @@ class EmbeddedServerManager:
     async def _async_ensure_package(
         self, *, defer_mutations: bool = False
     ) -> str | None:
-        """Use the externally managed package or ensure a managed install."""
-        if self._hass.config.skip_pip:
-            return await self._async_externally_managed_package_version()
-        return await self._async_ensure_managed_package(defer_mutations=defer_mutations)
+        """Fork: use the server bundled in vendor/; never pip-install or upgrade it."""
+        try:
+            version = await self._hass.async_add_executor_job(bundled_server.activate)
+        except bundled_server.BundledServerError as err:
+            raise EmbeddedServerError(str(err), kind="package") from err
+        if not _is_compatible_embedded_version(version):
+            raise EmbeddedServerError(
+                f"The bundled ha-mcp {version} is older than this component's "
+                f"minimum {MIN_EMBEDDED_SERVER_VERSION}; rebuild the fork.",
+                kind="package",
+            )
+        _LOGGER.info("HA-MCP bundled server package ready (version %s)", version)
+        return version
 
     async def _async_ensure_managed_package(
         self, *, defer_mutations: bool = False

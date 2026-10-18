@@ -1,0 +1,7 @@
+[console_scripts]
+ha-mcp = ha_mcp.__main__:main
+ha-mcp-oauth = ha_mcp.__main__:main_oauth
+ha-mcp-oidc = ha_mcp.__main__:main_oidc
+ha-mcp-smoke-test = ha_mcp.smoke_test:main
+ha-mcp-web = ha_mcp.__main__:main_web
+

@@ -1,0 +1,133 @@
+diff --git a/custom_components/ha_mcp_tools/__init__.py b/custom_components/ha_mcp_tools/__init__.py
+index 3d7bdbc..f7f5825 100644
+--- a/custom_components/ha_mcp_tools/__init__.py
++++ b/custom_components/ha_mcp_tools/__init__.py
+@@ -39,6 +39,7 @@ from homeassistant.helpers.storage import Store
+ from homeassistant.loader import async_get_integration
+ from ruamel.yaml import YAMLError
+ 
++from . import bundled_server  # noqa: F401  # fork: vendor/ first on sys.path
+ from .const import (
+     ALLOWED_READ_DIRS,
+     ALLOWED_VOLUME_ROOTS,
+diff --git a/custom_components/ha_mcp_tools/bundled_server.py b/custom_components/ha_mcp_tools/bundled_server.py
+new file mode 100644
+index 0000000..a174c9e
+--- /dev/null
++++ b/custom_components/ha_mcp_tools/bundled_server.py
+@@ -0,0 +1,63 @@
++"""Fork: serve the ha-mcp package bundled in ``vendor/``, never a pip install.
++
++Upstream installs and auto-updates ``ha-mcp`` from PyPI at runtime. This fork
++ships the reviewed server inside the component instead (see fork/UPSTREAM.json
++in the repository), so the only way new server code arrives is a new component
++release. Importing this module puts ``vendor/`` first on ``sys.path``, ahead of
++any ``ha_mcp`` an earlier upstream install left in site-packages, so both the
++import and ``importlib.metadata`` resolve to the bundled copy.
++"""
++
++from __future__ import annotations
++
++import importlib
++import importlib.metadata
++import importlib.util
++import os
++import sys
++from pathlib import Path
++
++VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
++DIST_NAME = "ha-mcp"
++
++# The server's PyPI update check only reports releases this fork will not take.
++os.environ.setdefault("HA_MCP_DISABLE_UPDATE_CHECK", "1")
++
++if str(VENDOR_DIR) not in sys.path:
++    sys.path.insert(0, str(VENDOR_DIR))
++
++
++class BundledServerError(RuntimeError):
++    """The bundled server is missing or shadowed."""
++
++
++def activate() -> str:
++    """Return the bundled server version after checking it is what imports (blocking)."""
++    vendor = str(VENDOR_DIR)
++    if sys.path[0] != vendor:
++        rest = [p for p in sys.path if p != vendor]
++        sys.path[:] = [vendor, *rest]
++    importlib.invalidate_caches()
++    dist_infos = sorted(VENDOR_DIR.glob("ha_mcp-*.dist-info"))
++    if len(dist_infos) != 1:
++        raise BundledServerError(
++            f"Expected one bundled ha_mcp dist-info in {VENDOR_DIR}, found {len(dist_infos)}; "
++            "reinstall the component."
++        )
++    version = importlib.metadata.Distribution.at(dist_infos[0]).version
++    loaded = sys.modules.get("ha_mcp")
++    origin = getattr(loaded, "__file__", None) if loaded else None
++    if origin is None:
++        spec = importlib.util.find_spec("ha_mcp")
++        origin = spec.origin if spec else None
++    if origin is None or not Path(origin).resolve().is_relative_to(VENDOR_DIR):
++        raise BundledServerError(
++            f"ha_mcp resolves to {origin}, not the bundled copy in {VENDOR_DIR}; "
++            "restart Home Assistant."
++        )
++    if importlib.metadata.version(DIST_NAME) != version:
++        raise BundledServerError(
++            f"Package metadata reports ha-mcp {importlib.metadata.version(DIST_NAME)} "
++            f"but the bundled copy is {version}; restart Home Assistant."
++        )
++    return version
+diff --git a/custom_components/ha_mcp_tools/coordinator.py b/custom_components/ha_mcp_tools/coordinator.py
+index c0d519d..17324a9 100644
+--- a/custom_components/ha_mcp_tools/coordinator.py
++++ b/custom_components/ha_mcp_tools/coordinator.py
+@@ -95,7 +95,10 @@ class ServerVersionCoordinator(DataUpdateCoordinator[ServerVersionInfo]):
+             # makes a PyPI-latest comparison meaningless - skip the fetch.
+             return ServerVersionInfo(installed=installed, latest=None, dist=dist)
+ 
+-        latest = await self._async_fetch_latest(dist)
++        # Fork: the server ships inside the component, so a newer PyPI build is
++        # never installable here; leaving latest unknown also keeps
++        # async_maybe_auto_update from reloading.
++        latest = None
+         return ServerVersionInfo(installed=installed, latest=latest, dist=dist)
+ 
+     async def _async_fetch_latest(self, dist: str) -> str | None:
+diff --git a/custom_components/ha_mcp_tools/embedded_server.py b/custom_components/ha_mcp_tools/embedded_server.py
+index 45490d2..c95be2b 100644
+--- a/custom_components/ha_mcp_tools/embedded_server.py
++++ b/custom_components/ha_mcp_tools/embedded_server.py
+@@ -55,6 +55,7 @@ from packaging.requirements import InvalidRequirement, Requirement
+ from packaging.utils import canonicalize_name
+ from packaging.version import InvalidVersion, Version
+ 
++from . import bundled_server
+ from .const import (
+     CHANNEL_DEV,
+     DATA_ACCESS_TOKEN,
+@@ -725,10 +726,19 @@ class EmbeddedServerManager:
+     async def _async_ensure_package(
+         self, *, defer_mutations: bool = False
+     ) -> str | None:
+-        """Use the externally managed package or ensure a managed install."""
+-        if self._hass.config.skip_pip:
+-            return await self._async_externally_managed_package_version()
+-        return await self._async_ensure_managed_package(defer_mutations=defer_mutations)
++        """Fork: use the server bundled in vendor/; never pip-install or upgrade it."""
++        try:
++            version = await self._hass.async_add_executor_job(bundled_server.activate)
++        except bundled_server.BundledServerError as err:
++            raise EmbeddedServerError(str(err), kind="package") from err
++        if not _is_compatible_embedded_version(version):
++            raise EmbeddedServerError(
++                f"The bundled ha-mcp {version} is older than this component's "
++                f"minimum {MIN_EMBEDDED_SERVER_VERSION}; rebuild the fork.",
++                kind="package",
++            )
++        _LOGGER.info("HA-MCP bundled server package ready (version %s)", version)
++        return version
+ 
+     async def _async_ensure_managed_package(
+         self, *, defer_mutations: bool = False
