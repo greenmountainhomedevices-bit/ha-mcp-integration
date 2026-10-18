@@ -4,11 +4,12 @@
   "commit": "a96752286be1a6511f32a62e90213641c8d18068",
   "skills_submodule_commit": "7690c5ea14e5c842bb143dbe5725ed48fe5449db",
   "component_version": "2.2.2",
-  "fork_version": "2.2.2.1",
+  "fork_version": "2.2.2.2",
   "server_version": "8.7.0",
   "pypi_wheel_sha256": "3e9bf674a4902488fb00f72eaa73a5bb1182d91f4663a319db736db1dadc2acf",
   "built_wheel_sha256": "5dc10541bbdf9bd6fb4bb336663f3d8a6582088768750a47c260d9392602825a",
   "home_assistant_pinned_against": "2026.9.4",
+  "dependencies_released_before": "2026-10-11T15:30:32Z",
   "patches": [
     "0001-bundled-server.patch"
   ]

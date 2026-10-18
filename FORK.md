@@ -21,8 +21,8 @@ when a new release of this repository is installed through HACS.
   - `HA_MCP_DISABLE_UPDATE_CHECK=1` turns off the server's own PyPI notice.
 - `manifest.json` pins every requirement Home Assistant does not already ship
   to an exact version (`fork/requirements.lock`), resolved against Home
-  Assistant's own constraints. Home Assistant installs those once; nothing
-  floats.
+  Assistant's own constraints, ignoring any release younger than 7 days
+  (`--cooldown-days`). Home Assistant installs those once; nothing floats.
 - Releases carry `ha_mcp_tools.zip` (HACS `zip_release`); the release notes
   give its sha256.
 - Upstream's GitHub workflows are removed and Actions are off.
@@ -42,7 +42,16 @@ The review-and-upgrade procedure lives in the ha-config repository
 
 ```sh
 uv run --no-project --python 3.13 fork/build.py --tag vX.Y.Z --ha <HA version> --rev 1 --zip
+zsh fork/smoke.sh
 ```
+
+`fork/smoke.sh` installs the pinned Home Assistant and `fork/requirements.lock`
+into a throwaway Python 3.14 env, plants a stale PyPI `ha-mcp`, and checks the
+component imports, the bundled copy wins, and ha-mcp's own smoke test passes.
+
+If the patch stops applying, rebuild with `--no-patches`, redo the edits the
+patch describes by hand, regenerate it with `git diff` (add `-N` the new file
+first), and rebuild normally.
 
 `--rev` counts fork builds of the same upstream tag. The manifest version is
 `<component version>.<rev>`, and the release tag is `v<manifest version>`.

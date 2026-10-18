@@ -1,10 +1,11 @@
 # Exact pins for ha-mcp + ha_mcp_tools on Home Assistant 2026.9.4
 # (Python 3.14.2, aarch64-unknown-linux-musl); packages Home Assistant ships are left to it.
+# Nothing released after 2026-10-11T15:30:32Z.
 aiofile==3.12.3
 annotated-types==0.8.0
-authlib==1.9.1
+authlib==1.8.0
 beartype==0.23.1
-cachetools==7.2.3
+cachetools==7.2.1
 caio==0.12.2
 click==8.5.0
 cyclopts==5.2.0
@@ -29,15 +30,15 @@ markdown-it-py==4.2.0
 mcp-types==2.3.0
 mcp==2.3.0
 mdurl==0.1.2
-more-itertools==11.2.1
+more-itertools==11.1.0
 openapi-pydantic==0.6.0
 opentelemetry-api==1.45.1
 pathable==0.6.0
-platformdirs==4.13.4
+platformdirs==4.13.0
 py-key-value-aio==0.4.6
 pydantic-core==2.46.4
 pydantic-monty==0.0.18
-pydantic-settings==2.16.0
+pydantic-settings==2.15.0
 pydantic==2.13.4
 pygments==2.21.0
 pyperclip==1.11.0
@@ -51,7 +52,7 @@ ruamel-yaml==0.19.1
 secretstorage==3.5.0
 socksio==1.0.0
 sse-starlette==3.5.0
-starlette==1.8.0
+starlette==1.7.0
 truststore==0.10.4
 typing-inspection==0.4.4
 uncalled-for==0.4.1

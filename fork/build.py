@@ -4,6 +4,7 @@
 Usage (from the repo root):
 
     uv run --no-project --python 3.13 fork/build.py --tag v8.7.0 --ha 2026.9.4 --rev 1 [--zip]
+        [--cooldown-days 7] [--no-patches]
 
 Steps, each fatal on failure:
 
@@ -18,6 +19,8 @@ Steps, each fatal on failure:
 5. Resolve every requirement to an exact version against Home Assistant --ha's
    own constraints for aarch64 musl / Python 3.14, and pin the ones Home
    Assistant does not already ship into manifest.json (also fork/requirements.lock).
+   Releases younger than --cooldown-days are ignored (Home Assistant itself is
+   exempt), so a freshly hijacked package version cannot be picked up.
 6. Set the manifest version to <component version>.<rev> and write
    fork/UPSTREAM.json.
 7. With --zip, write dist/ha_mcp_tools.zip (the HACS release asset) and print
@@ -29,6 +32,7 @@ Nothing here talks to Home Assistant or GitHub releases.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import re
@@ -73,12 +77,12 @@ def checkout(tag: str) -> Path:
     return src
 
 
-def copy_component(src: Path) -> None:
+def copy_component(src: Path, patches: bool) -> None:
     if COMPONENT.exists():
         shutil.rmtree(COMPONENT)
     shutil.copytree(src / "custom_components" / "ha_mcp_tools", COMPONENT,
                     ignore=shutil.ignore_patterns("__pycache__"))
-    for patch in sorted((FORK / "patches").glob("*.patch")):
+    for patch in sorted((FORK / "patches").glob("*.patch")) if patches else []:
         run("git", "apply", "--whitespace=nowarn", str(patch), cwd=ROOT)
 
 
@@ -122,12 +126,14 @@ def norm(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.split("[")[0].strip().lower())
 
 
-def compile_pins(reqs: list[str], constraints: Path, work: Path) -> dict[str, str]:
+def compile_pins(reqs: list[str], constraints: Path, work: Path, cutoff: str) -> dict[str, str]:
     infile, outfile = work / "in.txt", work / "out.txt"
     infile.write_text("\n".join(reqs) + "\n")
     run("uv", "pip", "compile", str(infile), "-o", str(outfile), "-q",
         "--python-version", PY_VERSION, "--python-platform", PLATFORM,
-        "-c", str(constraints), "--no-header", "--no-annotate")
+        "-c", str(constraints), "--no-header", "--no-annotate",
+        "--exclude-newer", cutoff,
+        "--exclude-newer-package", f"homeassistant={dt.datetime.now(dt.UTC):%Y-%m-%dT%H:%M:%SZ}")
     pins = {}
     for line in outfile.read_text().splitlines():
         m = re.match(r"([A-Za-z0-9_.\-\[\]]+)\s*==\s*(\S+)", line.strip())
@@ -136,13 +142,13 @@ def compile_pins(reqs: list[str], constraints: Path, work: Path) -> dict[str, st
     return pins
 
 
-def pin_requirements(ha: str, wheel: Path, own: list[str], work: Path) -> list[str]:
+def pin_requirements(ha: str, wheel: Path, own: list[str], work: Path, cutoff: str) -> list[str]:
     constraints = work / "package_constraints.txt"
     constraints.write_bytes(fetch(
         f"https://raw.githubusercontent.com/home-assistant/core/{ha}/homeassistant/package_constraints.txt"))
-    core = compile_pins([f"homeassistant=={ha}"], constraints, work)
+    core = compile_pins([f"homeassistant=={ha}"], constraints, work, cutoff)
     full = compile_pins([f"homeassistant=={ha}", f"ha-mcp @ {wheel.as_uri()}", *own],
-                        constraints, work)
+                        constraints, work, cutoff)
     moved = {k: (core[k][1], v[1]) for k, v in full.items() if k in core and core[k][1] != v[1]}
     if moved:
         sys.exit(f"ha-mcp would move packages Home Assistant {ha} ships: {moved}")
@@ -151,6 +157,7 @@ def pin_requirements(ha: str, wheel: Path, own: list[str], work: Path) -> list[s
     (FORK / "requirements.lock").write_text(
         f"# Exact pins for ha-mcp + ha_mcp_tools on Home Assistant {ha}\n"
         f"# (Python {PY_VERSION}, {PLATFORM}); packages Home Assistant ships are left to it.\n"
+        f"# Nothing released after {cutoff}.\n"
         + "\n".join(pins) + "\n")
     return pins
 
@@ -161,6 +168,10 @@ def main() -> None:
     ap.add_argument("--ha", required=True, help="Home Assistant version to pin against")
     ap.add_argument("--rev", type=int, default=1, help="fork revision of this upstream tag")
     ap.add_argument("--zip", action="store_true", help="write dist/ha_mcp_tools.zip")
+    ap.add_argument("--cooldown-days", type=int, default=7,
+                    help="ignore dependency releases younger than this")
+    ap.add_argument("--no-patches", action="store_true",
+                    help="copy the component unpatched (for re-authoring a patch)")
     args = ap.parse_args()
 
     src = checkout(args.tag)
@@ -170,12 +181,13 @@ def main() -> None:
                  capture=True).strip()
     pristine = json.loads((src / "custom_components/ha_mcp_tools/manifest.json").read_text())
 
-    copy_component(src)
+    cutoff = f"{dt.datetime.now(dt.UTC) - dt.timedelta(days=args.cooldown_days):%Y-%m-%dT%H:%M:%SZ}"
+    copy_component(src, not args.no_patches)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         built, pypi_sha, built_sha = build_and_compare(src, version, work)
         vendor(built)
-        pins = pin_requirements(args.ha, built, pristine["requirements"], work)
+        pins = pin_requirements(args.ha, built, pristine["requirements"], work, cutoff)
 
     manifest_path = COMPONENT / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -194,7 +206,9 @@ def main() -> None:
         "pypi_wheel_sha256": pypi_sha,
         "built_wheel_sha256": built_sha,
         "home_assistant_pinned_against": args.ha,
-        "patches": [p.name for p in sorted((FORK / "patches").glob("*.patch"))],
+        "dependencies_released_before": cutoff,
+        "patches": [] if args.no_patches else
+                   [p.name for p in sorted((FORK / "patches").glob("*.patch"))],
     }
     (FORK / "UPSTREAM.json").write_text(json.dumps(upstream, indent=2) + "\n")
     print(json.dumps(upstream, indent=2))
